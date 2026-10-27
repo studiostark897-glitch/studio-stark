@@ -6,11 +6,14 @@
    As telas usam apenas as funções exportadas aqui.
    ============================================================ */
 import { createClient } from "@supabase/supabase-js";
+import { SUPABASE } from "../config.js";
 import { definirCategorias, servicoPorId } from "./catalogo.js";
 import { paraMin } from "./format.js";
 
-const URL_SB = import.meta.env.VITE_SUPABASE_URL;
-const CHAVE_SB = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Modo demonstração (sem banco) só em desenvolvimento local com VITE_DEMO=1 ou --mode demo.
+const DEMO = import.meta.env.MODE === "demo" || import.meta.env.VITE_DEMO === "1";
+const URL_SB = DEMO ? null : import.meta.env.VITE_SUPABASE_URL || SUPABASE.url;
+const CHAVE_SB = DEMO ? null : import.meta.env.VITE_SUPABASE_ANON_KEY || SUPABASE.chave;
 const sb = URL_SB && CHAVE_SB ? createClient(URL_SB, CHAVE_SB) : null;
 
 export const remoto = !!sb;
@@ -165,6 +168,29 @@ export async function meusAgendamentos() {
     return ((await rpc("meus_agendamentos", { p_token: c.token })) ?? []).map(normalizar);
   }
   return ler(K_AGENDAMENTOS, []).filter((a) => a.cliente.whatsapp === c.whatsapp);
+}
+
+/* Cartão fidelidade: quantos atendimentos CONCLUÍDOS este cliente tem
+   (somando todos os aparelhos em que ele agendou com o mesmo WhatsApp). */
+export async function minhaFidelidade() {
+  const c = obterCliente();
+  if (!c) return 0;
+  if (sb) return c.token ? Number(await rpc("minha_fidelidade", { p_token: c.token })) || 0 : 0;
+  return ler(K_AGENDAMENTOS, []).filter((a) => a.cliente.whatsapp === c.whatsapp && a.status === "concluido").length;
+}
+
+/* Para a equipe: { whatsapp: concluídos } dos clientes informados. */
+export async function fidelidadeClientes(whatsapps) {
+  const lista = [...new Set(whatsapps.filter(Boolean))];
+  if (!lista.length) return {};
+  if (sb) {
+    const linhas = await rpc("fidelidade_clientes", { p_whatsapps: lista });
+    return Object.fromEntries((linhas ?? []).map((l) => [l.whatsapp, l.concluidos]));
+  }
+  const mapa = {};
+  for (const a of ler(K_AGENDAMENTOS, []))
+    if (a.status === "concluido" && lista.includes(a.cliente.whatsapp)) mapa[a.cliente.whatsapp] = (mapa[a.cliente.whatsapp] ?? 0) + 1;
+  return mapa;
 }
 
 export async function cancelarMeu(id) {
